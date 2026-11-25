@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>热成像仪交互原型 - 60%半透明与精简缩放版</title>
+    <style>
+        /* 基础重置与居中背景 */
+        body, html { margin: 0; padding: 0; width: 100%; height: 100%; background-color: #2c2c2c; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; user-select: none; display: flex; justify-content: center; align-items: center; }
+        
+        /* 提取图片中的高亮色作为 CSS 变量，橙色 */
+        :root {
+            --highlight-color: #ff9800; 
+        }
+
+        /* iPhone 18 模拟容器 (横屏比例 874 x 402) */
+        #phone-simulator {
+            width: 100%;
+            max-width: 874px;
+            aspect-ratio: 874 / 402;
+            position: relative;
+            border-radius: 48px;
+            overflow: hidden;
+            box-shadow: 0 0 0 12px #000, 0 15px 35px rgba(0,0,0,0.6);
+            background: #1a1a1a;
+            transition: max-width 0.5s ease-in-out, aspect-ratio 0.5s ease-in-out;
+        }
+
+        /* 内部页面通用满屏样式 */
+        .page { position: absolute; top: 0; left: 0; width: 100%; height: 100%; overflow: hidden; display: none; opacity: 0; transition: opacity 0.3s; }
+        .page.active { display: flex; opacity: 1; z-index: 100; }
+        #app.active { z-index: 1; }
+
+        /* ================= 首次登陆 Onboarding 样式 ================= */
+        #onboarding-page { background: #1a1a1a; flex-direction: column; color: #fff; z-index: 300; }
+        .ob-step { display: none; flex-direction: column; align-items: center; justify-content: center; width: 100%; height: 100%; padding: 20px; box-sizing: border-box; }
+        .ob-step.active { display: flex; animation: fadeIn 0.4s ease-in; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        
+        .ob-title { font-size: 22px; font-weight: bold; margin-bottom: 10px; color: var(--highlight-color); }
+        .ob-desc { font-size: 14px; color: #aaa; margin-bottom: 20px; text-align: center; }
+        
+        .ob-btn { background: var(--highlight-color); color: #fff; padding: 10px 30px; border-radius: 25px; font-size: 15px; font-weight: bold; cursor: pointer; margin-top: 15px; transition: transform 0.1s; }
+        .ob-btn:active { transform: scale(0.95); }
+        .ob-btn.disabled { background: #555; color: #888; pointer-events: none; }
+
+        .perm-cards { display: flex; gap: 15px; width: 90%; justify-content: center; margin-bottom: 10px; }
+        .perm-card { background: #2c2c2c; padding: 20px 15px; border-radius: 12px; flex: 1; text-align: center; border: 1px solid transparent; transition: border 0.3s; }
+        .perm-card:hover { border: 1px solid var(--highlight-color); }
+        .perm-icon { width: 36px; height: 36px; stroke: var(--highlight-color); margin-bottom: 10px; }
+        .perm-card h4 { margin: 0 0 8px 0; font-size: 15px; }
+        .perm-card p { margin: 0; font-size: 12px; color: #888; line-height: 1.4; }
+
+        .lang-grid { display: flex; flex-wrap: wrap; gap: 8px; max-width: 720px; max-height: 175px; overflow-y: auto; justify-content: center; margin-bottom: 10px; padding: 4px; }
+        .lang-grid::-webkit-scrollbar { width: 4px; }
+        .lang-grid::-webkit-scrollbar-thumb { background: #555; border-radius: 2px; }
+        .lang-option { background: #2c2c2c; padding: 8px 14px; border-radius: 8px; cursor: pointer; border: 1px solid #444; font-size: 13px; }
+        .lang-option.active { border-color: var(--highlight-color); color: var(--highlight-color); background: rgba(255, 152, 0, 0.15); }
+        .ob-version { position: absolute; bottom: 12px; font-size: 11px; color: #666; }
+
+        .radar-container { position: relative; width: 120px; height: 120px; display: flex; justify-content: center; align-items: center; margin-bottom: 20px; }
+        .radar-dot { width: 16px; height: 16px; background: var(--highlight-color); border-radius: 50%; z-index: 2; }
+        .radar-ring { position: absolute; width: 100%; height: 100%; border-radius: 50%; border: 2px solid var(--highlight-color); opacity: 0; animation: radarPing 2s infinite ease-out; }
+        .radar-ring:nth-child(2) { animation-delay: 0.6s; }
+        .radar-ring:nth-child(3) { animation-delay: 1.2s; }
+        @keyframes radarPing { 0% { transform: scale(0.1); opacity: 1; } 100% { transform: scale(1.8); opacity: 0; } }
+        
+        .found-device { display: none; background: #2c2c2c; border: 1px solid var(--highlight-color); padding: 12px 20px; border-radius: 8px; align-items: center; gap: 15px; margin-bottom: 20px; animation: fadeIn 0.3s; }
+        .device-icon { width: 30px; height: 30px; stroke: #fff; }
+
+        /* ================= 主界面样式 ================= */
+        /* 模拟热成像背景层以体现侧边栏60%半透明效果 */
+        #app { 
+            background: radial-gradient(circle at 52% 48%, #2e343b 0%, #1d2126 55%, #121417 100%); 
+            color: #fff; 
+            flex-direction: row; 
+        }
+        
+        /* 首页左右两侧菜单栏：黑色半透明状态，透明度 60% (rgba(0, 0, 0, 0.6)) */
+        .sidebar { 
+            width: 88px; 
+            height: 100%; 
+            display: flex; 
+            flex-direction: column; 
+            justify-content: space-evenly; 
+            align-items: center; 
+            background-color: rgba(0, 0, 0, 0.6); 
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            z-index: 10; 
+            padding: 14px 0; 
+            box-sizing: border-box; 
+            flex-shrink: 0; 
+        }
+        .center-screen { flex: 1; position: relative; display: flex; justify-content: center; align-items: center; }
+        
+        /* 戴手套友好大尺寸纯图标按钮：64x64px 独立触控热区 + 38px 图标 */
+        .icon-btn { 
+            display: flex; 
+            justify-content: center; 
+            align-items: center; 
+            cursor: pointer; 
+            color: #fff; 
+            width: 64px; 
+            height: 64px; 
+            border-radius: 16px;
+            background: rgba(255, 255, 255, 0.05);
+            transition: color 0.25s, background-color 0.25s, transform 0.1s; 
+        }
+        .icon-btn:hover { background: rgba(255, 255, 255, 0.12); }
+        .icon-btn:active { transform: scale(0.92); background: rgba(255, 152, 0, 0.2); }
+        .custom-icon { width: 38px; height: 38px; transition: stroke 0.25s; }
+        
+        .icon-btn.active { color: var(--highlight-color); background: rgba(255, 152, 0, 0.18); }
+        .icon-btn.active .custom-icon { stroke: var(--highlight-color); }
+
+        .recording { color: #ff3b30 !important; background: rgba(255, 59, 48, 0.18) !important; }
+        .recording .custom-icon { stroke: #ff3b30 !important; color: #ff3b30; fill: rgba(255, 59, 48, 0.2); }
+        #record-timer { position: absolute; bottom: 15px; right: 15px; color: #ff3b30; font-size: 16px; font-weight: bold; display: none; background: rgba(0,0,0,0.6); padding: 5px 10px; border-radius: 6px; z-index: 5;}
+        .toast { position: absolute; background: rgba(0, 0, 0, 0.75); border: 1px solid rgba(255,255,255,0.15); padding: 14px 28px; border-radius: 10px; font-size: 15px; display: none; text-align: center; z-index: 200; color: #fff; white-space: nowrap; backdrop-filter: blur(8px); }
+
+        .modal { position: absolute; background: rgba(0, 0, 0, 0.85); border: 1px solid rgba(255,255,255,0.15); color: #fff; width: 260px; border-radius: 12px; overflow: hidden; display: none; flex-direction: column; z-index: 60; backdrop-filter: blur(10px); }
+        .modal-body { padding: 25px 15px; text-align: center; border-bottom: 1px solid rgba(255, 255, 255, 0.15); }
+        .modal-body .title { font-size: 16px; font-weight: bold; margin-bottom: 8px; color: #fff; }
+        .modal-footer { display: flex; }
+        .modal-btn { flex: 1; padding: 12px; text-align: center; cursor: pointer; color: #fff; font-weight: bold; font-size: 14px; }
+        .modal-btn:first-child { border-right: 1px solid rgba(255, 255, 255, 0.15); color: #aaa; }
+
+        /* ================= 统一侧边二级菜单样式（黑色半透明，透明度 60%：rgba(0, 0, 0, 0.6)） ================= */
+        .submenu { 
+            position: absolute; 
+            right: 98px; 
+            top: 50%;
+            transform: translateY(-50%);
+            display: none; 
+            flex-direction: column; 
+            gap: 6px; 
+            z-index: 20; 
+            max-height: 86%; 
+            overflow-y: auto; 
+            padding: 8px;
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+            scrollbar-width: none;
+        }
+        .submenu::-webkit-scrollbar { display: none; }
+
+        /* 统一菜单项尺寸：宽 160px，高 44px，白色字体 */
+        .menu-item { 
+            background: rgba(255, 255, 255, 0.08); 
+            color: #ffffff; 
+            width: 160px; 
+            height: 44px;
+            padding: 0 12px; 
+            border-radius: 8px; 
+            display: flex; 
+            justify-content: space-between; 
+            align-items: center; 
+            cursor: pointer; 
+            box-sizing: border-box; 
+            font-size: 13px; 
+            font-weight: 500;
+            flex-shrink: 0;
+            transition: background-color 0.2s, border-color 0.2s;
+            border: 1px solid transparent;
+        }
+        .menu-item:hover { background: rgba(255, 255, 255, 0.16); }
+        .menu-item:active { background: rgba(255, 152, 0, 0.22); border-color: rgba(255, 152, 0, 0.5); }
+        .menu-item-center { justify-content: center; } 
+        
+        .radio-dot { width: 12px; height: 12px; border-radius: 50%; background-color: rgba(255, 255, 255, 0.28); margin-right: 10px; flex-shrink: 0; transition: background-color 0.25s, box-shadow 0.25s; }
+        .radio-dot.active { background-color: var(--highlight-color); box-shadow: 0 0 6px var(--highlight-color); }
+        .item-left { display: flex; align-items: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .item-right-box { width: 32px; height: 24px; background: rgba(255, 255, 255, 0.15); color: #fff; display: flex; justify-content: center; align-items: center; border-radius: 4px; font-size: 12px; font-weight: bold; }
+        .arrow { color: var(--highlight-color); font-weight: bold; font-size: 14px; transition: transform 0.2s; }
+        .color-box { width: 26px; height: 22px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.25); }
+        
+        .sub-dropdown { display: none; flex-direction: column; gap: 5px; width: 160px; max-height: 195px; overflow-y: auto; padding-right: 2px; box-sizing: border-box; }
+        .sub-dropdown::-webkit-scrollbar { width: 3px; }
+        .sub-dropdown::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); border-radius: 2px; }
+        .dropdown-item { padding-left: 14px; background: rgba(0, 0, 0, 0.45); height: 40px; font-size: 12.5px; }
+
+        .center-play-icon {
+            position: absolute; width: 72px; height: 72px; background-color: var(--highlight-color); border-radius: 50%; display: flex; justify-content: center; align-items: center; z-index: 5; cursor: pointer; box-shadow: 0 4px 12px rgba(0,0,0,0.3); transition: transform 0.1s;
+        }
+        .center-play-icon:active { transform: scale(0.95); }
+        .center-play-triangle { width: 0; height: 0; border-top: 14px solid transparent; border-bottom: 14px solid transparent; border-left: 22px solid #000; margin-left: 6px; }
+
+        /* ================= 调色板 上下滚轮式菜单（黑色半透明 60%，一页完整显示 4 个调色板） ================= */
+        #menu-palette {
+            background: rgba(0, 0, 0, 0.6);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 12px;
+            padding: 12px 8px;
+            width: 112px;
+            height: 276px;
+            overflow-y: auto;
+            scroll-snap-type: y mandatory;
+            scrollbar-width: none;
+            align-items: center;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.45);
+            box-sizing: border-box;
+            gap: 12px;
+        }
+        #menu-palette::-webkit-scrollbar { display: none; }
+
+        .palette-item {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+            height: 54px;
+            scroll-snap-align: start;
+            cursor: pointer;
+            opacity: 0.55;
+            transition: all 0.2s ease;
+            transform: scale(0.94);
+            flex-shrink: 0;
+        }
+        
+        .palette-item.active {
+            opacity: 1;
+            transform: scale(1.04);
+        }
+        
+        .palette-img {
+            width: 86px;
+            height: 52px;
+            border: 2px solid rgba(255,255,255,0.15);
+            border-radius: 7px;
+            box-shadow: 0 3px 8px rgba(0,0,0,0.5);
+            transition: border-color 0.2s, box-shadow 0.2s;
+            box-sizing: border-box;
+        }
+        .palette-item.active .palette-img {
+            border-color: var(--highlight-color);
+            box-shadow: 0 0 12px rgba(255, 152, 0, 0.75);
+        }
+
+        /* 图库样式 */
+        #gallery-page { background: #e6e6e6; flex-direction: column; align-items: center; }
+        .gallery-header { width: 100%; height: 50px; background: #000; display: flex; align-items: center; justify-content: space-between; padding: 0 15px; box-sizing: border-box; color: #fff; font-size: 16px; flex-shrink: 0; }
+        .back-btn { cursor: pointer; font-size: 20px; padding: 0 10px; }
+        .gallery-container { display: flex; flex-direction: row; justify-content: center; align-items: center; gap: 40px; width: 100%; height: calc(100% - 50px); padding: 20px 40px; box-sizing: border-box; }
+        .gallery-folder { background: #fff; border-radius: 12px; display: flex; justify-content: center; align-items: center; box-shadow: 0 4px 12px rgba(0,0,0,0.08); cursor: pointer; width: 25%; max-width: 220px; aspect-ratio: 1.5 / 1; overflow: hidden; transition: transform 0.1s; }
+        .gallery-folder:active { transform: scale(0.96); }
+        .gallery-folder svg { width: 50%; height: auto; }
+        #gallery-sub-page { background: #fff; flex-direction: column; }
+        #gallery-sub-page .gallery-header { height: 45px; } 
+        .sub-gallery-grid { display: flex; padding: 15px; gap: 15px; flex-wrap: wrap; align-content: flex-start; overflow-y: auto; height: calc(100% - 45px); }
+        .thumbnail-box { width: calc(25% - 12px); aspect-ratio: 4/3; background-color: #2c2c2c; position: relative; border-radius: 4px; overflow: hidden; }
+        .thumbnail-box.green-tint { background-color: #1a3a2a; }
+        .play-btn { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 36px; height: 36px; border-radius: 50%; border: 2px solid var(--highlight-color); display: flex; justify-content: center; align-items: center; background: rgba(0,0,0,0.4); }
+        .play-triangle { width: 0; height: 0; border-top: 6px solid transparent; border-bottom: 6px solid transparent; border-left: 10px solid var(--highlight-color); margin-left: 3px; }
+        .check-circle { position: absolute; top: 8px; right: 8px; width: 18px; height: 18px; border-radius: 50%; border: 1.5px solid #fff; display: flex; justify-content: center; align-items: center; background: rgba(0,0,0,0.3); }
+        .check-mark { width: 5px; height: 9px; border-right: 1.5px solid #fff; border-bottom: 1.5px solid #fff; transform: rotate(45deg); margin-bottom: 2px; }
+        
+        /* 新手操作引导遮罩层 */
+        #guide-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 9999; display: none; overflow: hidden; }
+        #guide-mask-bg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); }
+        #guide-highlight-box { position: absolute; border: 2px dashed var(--highlight-color); border-radius: 8px; box-shadow: 0 0 0 9999px rgba(0,0,0,0.7); z-index: 10000; transition: all 0.4s ease; pointer-events: none; display: none; }
+        .guide-tooltip { position: absolute; z-index: 10001; background: #fff; color: #333; padding: 20px; border-radius: 12px; width: 220px; text-align: center; left: 50%; top: 50%; transform: translate(-50%, -50%); box-shadow: 0 10px 25px rgba(0,0,0,0.2); transition: all 0.4s ease; }
+        .guide-btn { margin-top: 15px; background: var(--highlight-color); color: #fff; padding: 8px 16px; border-radius: 20px; cursor: pointer; display: inline-block; font-size: 14px; font-weight: bold; }
+        .guide-btn:active { transform: scale(0.95); }
+    </style>
+</head>
+<body>
+
+<div id="phone-simulator">
+
+    <!-- 全局提示框 -->
+    <div class="toast" id="toast" style="top: 50%; left: 50%; transform: translate(-50%, -50%);"></div>
+
+    <!-- ================= 首次使用前置引导页 ================= -->
+    <div id="onboarding-page" class="page">
+        <!-- 步骤 1：权限授权 -->
+        <div id="ob-step-1" class="ob-step active">
+            <div class="ob-title">APP 权限授权</div>
+            <div class="ob-desc">为了提供完整的设备体验，我们需要以下基础权限：</div>
+            
+            <div class="perm-cards">
+                <div class="perm-card">
+                    <svg class="perm-icon" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline>
+                    </svg>
+                    <h4>存储与照片</h4>
+                    <p>保存热成像图与录制的视频至本地相册</p>
+                </div>
+                <div class="perm-card">
+                    <svg class="perm-icon" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle>
+                    </svg>
+                    <h4>相机与麦克风</h4>
+                    <p>调用手机镜头用于画中画合成，及录制环境音</p>
+                </div>
+                <div class="perm-card">
+                    <svg class="perm-icon" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle>
+                    </svg>
+                    <h4>位置信息</h4>
+                    <p>为热力图添加地理标签，以及辅助蓝牙设备扫描</p>
+                </div>
+            </div>
+
+            <div class="ob-btn" onclick="nextObStep(2)">授权并继续</div>
+        </div>
+
+        <!-- 步骤 2：基础设置（支持19种语言） -->
+        <div id="ob-step-2" class="ob-step">
+            <div class="ob-title">基础偏好设置</div>
+            <div class="ob-desc">请选择您的首选语言（共 19 种语言，可在设置中随时更改）</div>
+            
+            <div class="lang-grid" id="ob-lang-grid">
+                <!-- 由 JS 动态渲染 19 种语言 -->
+            </div>
+
+            <div class="ob-btn" onclick="nextObStep(3)">下一步</div>
+            <div class="ob-version">Thermal App v1.0.0</div>
+        </div>
+
+        <!-- 步骤 3：设备连接 -->
+        <div id="ob-step-3" class="ob-step">
+            <div class="ob-title">设备搜索中</div>
+            <div class="ob-desc" id="radar-desc">正在扫描附近的 WiFi/蓝牙 热成像设备...</div>
+            
+            <div class="radar-container" id="radar-anim">
+                <div class="radar-ring"></div>
+                <div class="radar-ring"></div>
+                <div class="radar-ring"></div>
+                <div class="radar-dot"></div>
+            </div>
+
+            <div class="found-device" id="found-device-box">
+                <svg class="device-icon" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="2" y="7" width="20" height="14" rx="2" ry="2"></rect><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"></path>
+                </svg>
+                <div style="text-align: left;">
+                    <div style="font-weight: bold; font-size: 15px;">Thermal_HB50_A39B</div>
+                    <div style="font-size: 12px; color: #aaa;">信号极佳 · 局域网直连</div>
+                </div>
+            </div>
+
+            <div class="ob-btn disabled" id="btn-enter-app" onclick="finishOnboarding()">添加设备并进入</div>
+        </div>
+    </div>
+
+
+    <!-- ================= 主视口 (横屏 iPhone 18 适配) ================= -->
+    <div id="app" class="page">
+        <!-- 左侧按键（黑色半透明 60%，64x64px 戴手套友好触控区） -->
+        <div class="sidebar" id="left-sidebar">
+            <div class="icon-btn" onclick="openPage('gallery-page')" title="图库">
+                <svg class="custom-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+            </div>
+            <div class="icon-btn" onclick="captureImage()" title="抓拍">
+                <svg class="custom-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+            </div>
+            <div class="icon-btn" id="btn-record" onclick="toggleRecord()" title="录制">
+                <svg class="custom-icon record-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="4" fill="currentColor"></circle></svg>
+            </div>
+            <div class="icon-btn" onclick="refreshScreen()" title="刷新">
+                <svg class="custom-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M14.31 8l5.74 9.94M9.69 8h11.48M7.38 12l5.74-9.94M9.69 16L3.95 6.06M14.31 16H2.83m13.79-4l-5.74 9.94"></path></svg>
+            </div>
+        </div>
+
+        <div class="center-screen">
+            <div class="center-play-icon" onclick="playCenterVideo()"><div class="center-play-triangle"></div></div>
+            <div id="record-timer">00:00:02</div>
+            <div class="modal" id="version-modal">
+                <div class="modal-body">
+                    <div class="title">版本信息</div>
+                    <div style="font-size: 13px;">Thermal Binocular [1.0.0.18.7]</div>
+                </div>
+                <div class="modal-footer"><div class="modal-btn" onclick="closeVersionModal()">取消</div><div class="modal-btn" onclick="closeVersionModal()">确认</div></div>
+            </div>
+        </div>
+
+        <!-- 右侧按键（黑色半透明 60%，64x64px 戴手套友好触控区） -->
+        <div class="sidebar" id="right-sidebar">
+            <div class="icon-btn" onclick="toggleMenu('menu-zoom')" title="缩放">
+                <svg class="custom-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line><line x1="11" y1="8" x2="11" y2="14"></line><line x1="8" y1="11" x2="14" y2="11"></line></svg>
+            </div>
+            <div class="icon-btn" onclick="toggleMenu('menu-image')" title="图像">
+                <svg class="custom-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="12" r="6"></circle><circle cx="15" cy="12" r="6" fill="currentColor"></circle></svg>
+            </div>
+            <div class="icon-btn" onclick="toggleMenu('menu-palette')" title="调色板">
+                <svg class="custom-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22a10 10 0 1 1 10-10c0 1-1 2-2 2h-1c-1.1 0-2 .9-2 2s.9 2 2 2h.1c1.2 0 2.2 1.1 2 2.4A9.9 9.9 0 0 1 12 22z"></path><circle cx="7.5" cy="10.5" r=".5" fill="currentColor"></circle><circle cx="10.5" cy="6.5" r=".5" fill="currentColor"></circle><circle cx="14.5" cy="6.5" r=".5" fill="currentColor"></circle><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"></circle></svg>
+            </div>
+            <div class="icon-btn" onclick="toggleMenu('menu-settings')" title="设置">
+                <svg class="custom-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            </div>
+        </div>
+
+        <!-- 放大倍数菜单（黑色半透明 60%，删除小圆点右侧冗余文字，仅保留右侧单个倍数提示） -->
+        <div class="submenu" id="menu-zoom">
+            <div class="menu-item" onclick="selectRadio(this)"><div class="item-left"><div class="radio-dot active"></div></div><div class="item-right-box">1X</div></div>
+            <div class="menu-item" onclick="selectRadio(this)"><div class="item-left"><div class="radio-dot"></div></div><div class="item-right-box">2X</div></div>
+            <div class="menu-item" onclick="selectRadio(this)"><div class="item-left"><div class="radio-dot"></div></div><div class="item-right-box">4X</div></div>
+            <div class="menu-item" onclick="selectRadio(this)"><div class="item-left"><div class="radio-dot"></div></div><div class="item-right-box">8X</div></div>
+        </div>
+
+        <!-- 图像模式菜单（黑色半透明 60%，顺序：红外 - PIP - 融合 - 可见光） -->
+        <div class="submenu" id="menu-image">
+            <div class="menu-item" onclick="selectRadio(this)"><div class="item-left"><div class="radio-dot active"></div>红外</div><div class="color-box" style="background: linear-gradient(to right, purple, red, yellow);"></div></div>
+            <div class="menu-item" onclick="selectRadio(this)"><div class="item-left"><div class="radio-dot"></div>PIP</div><div class="color-box" style="background: linear-gradient(45deg, yellow, purple);"></div></div>
+            <div class="menu-item" onclick="selectRadio(this)"><div class="item-left"><div class="radio-dot"></div>融合</div><div class="color-box" style="background: #ccc;"></div></div>
+            <div class="menu-item" onclick="selectRadio(this)"><div class="item-left"><div class="radio-dot"></div>可见光</div><div class="color-box" style="background: linear-gradient(to right, blue, white, red);"></div></div>
+        </div>
+
+        <!-- ================= 滚轮调色板菜单（黑色半透明 60%，一页完整显示4个） ================= -->
+        <div class="submenu" id="menu-palette">
+            <!-- 1. 白热 -->
+            <div class="palette-item active" onclick="selectPalette(this)" title="白热">
+                <div class="palette-img" style="background: radial-gradient(circle, #ffffff 12%, #9e9e9e 48%, #1c1c1c 88%);"></div>
+            </div>
+            <!-- 2. 黑热 -->
+            <div class="palette-item" onclick="selectPalette(this)" title="黑热">
+                <div class="palette-img" style="background: radial-gradient(circle, #111111 12%, #666666 48%, #e0e0e0 88%);"></div>
+            </div>
+            <!-- 3. 红热 -->
+            <div class="palette-item" onclick="selectPalette(this)" title="红热">
+                <div class="palette-img" style="background: radial-gradient(circle, #ff2a2a 12%, #888888 48%, #1c1c1c 88%);"></div>
+            </div>
+            <!-- 4. 彩虹 -->
+            <div class="palette-item" onclick="selectPalette(this)" title="彩虹">
+                <div class="palette-img" style="background: radial-gradient(circle, #ffffff 5%, #ff3b30 22%, #ffcc00 42%, #34c759 62%, #007aff 82%, #1a0033 100%);"></div>
+            </div>
+            <!-- 5. 铁红 -->
+            <div class="palette-item" onclick="selectPalette(this)" title="铁红">
+                <div class="palette-img" style="background: radial-gradient(circle, #fff59d 8%, #ff7043 32%, #ab47bc 65%, #1a002b 100%);"></div>
+            </div>
+            <!-- 6. 冷色 -->
+            <div class="palette-item" onclick="selectPalette(this)" title="冷色">
+                <div class="palette-img" style="background: radial-gradient(circle, #e0f7fa 10%, #29b6f6 40%, #1565c0 72%, #061329 100%);"></div>
+            </div>
+            <!-- 7. 红外线 -->
+            <div class="palette-item" onclick="selectPalette(this)" title="红外线">
+                <div class="palette-img" style="background: radial-gradient(circle, #ffea00 8%, #ff1744 35%, #651fff 70%, #0d0221 100%);"></div>
+            </div>
+        </div>
+
+        <!-- 设置菜单（黑色半透明 60%，尺寸与放大倍数一致，含19种语言） -->
+        <div class="submenu" id="menu-settings">
+            <div class="menu-item menu-item-center" onclick="searchDevice()">查询设备</div>
+            <div class="menu-item" onclick="toggleSettingsDropdown('dropdown-range')"><span style="flex: 1; text-align: center;">测距</span><span class="arrow">&gt;</span></div>
+            <div class="sub-dropdown" id="dropdown-range">
+                <div class="menu-item dropdown-item" onclick="selectDropdownRadio(this)"><div class="item-left"><div class="radio-dot active"></div>单次测距</div></div>
+                <div class="menu-item dropdown-item" onclick="selectDropdownRadio(this)"><div class="item-left"><div class="radio-dot"></div>连续测距</div></div>
+            </div>
+            <div class="menu-item" onclick="toggleSettingsDropdown('dropdown-lang')"><span style="flex: 1; text-align: center;">语言</span><span class="arrow">&gt;</span></div>
+            <div class="sub-dropdown" id="dropdown-lang">
+                <!-- 由 JS 动态渲染 19 种语言 -->
+            </div>
+            <div class="menu-item menu-item-center" onclick="showVersionModal()">版本信息</div>
+        </div>
+    </div>
+
+    <!-- 主图库与子图库 -->
+    <div id="gallery-page" class="page">
+        <div class="gallery-header">
+            <span class="back-btn" onclick="openPage('app')">＜</span>
+            <span>多媒体</span>
+            <span style="visibility: hidden; width: 40px;"></span>
+        </div>
+        <div class="gallery-container">
+            <div class="gallery-folder" onclick="openPage('gallery-sub-page')"><svg viewBox="0 0 100 70"><rect x="15" y="10" width="60" height="40" rx="3" fill="none" stroke="#687e91" stroke-width="3"/><rect x="25" y="20" width="60" height="40" rx="3" fill="#687e91"/><circle cx="65" cy="32" r="4.5" fill="#fff"/><path d="M25 60 L45 42 L55 52 L65 44 L85 60 Z" fill="#fff"/></svg></div>
+            <div class="gallery-folder" onclick="openPage('gallery-sub-page')"><svg viewBox="0 0 100 70"><rect x="15" y="15" width="60" height="40" rx="3" fill="none" stroke="#687e91" stroke-width="3"/><rect x="25" y="25" width="60" height="40" rx="3" fill="none" stroke="#687e91" stroke-width="3"/><polygon points="48,35 48,55 64,45" fill="#687e91"/></svg></div>
+            <div class="gallery-folder" onclick="openPage('gallery-sub-page')"><svg viewBox="0 0 100 70"><rect x="15" y="10" width="60" height="40" rx="3" fill="none" stroke="#687e91" stroke-width="3"/><rect x="25" y="20" width="60" height="40" rx="3" fill="#687e91"/><circle cx="65" cy="32" r="4.5" fill="#fff"/><path d="M25 60 L45 42 L55 52 L65 44 L85 60 Z" fill="#fff"/><rect x="68" y="44" width="14" height="18" rx="2" fill="none" stroke="#d4b455" stroke-width="1.5"/><path d="M 71 49 Q 75 46 79 49" fill="none" stroke="#d4b455" stroke-width="1.5"/><circle cx="75" cy="55" r="1.5" fill="#d4b455"/></svg></div>
+        </div>
+    </div>
+    <div id="gallery-sub-page" class="page">
+        <div class="gallery-header"><span class="back-btn" onclick="openPage('gallery-page')">＜</span><span>多媒体</span><span class="back-btn" style="font-weight: bold;">⋮</span></div>
+        <div class="sub-gallery-grid">
+            <div class="thumbnail-box"><div class="check-circle"><div class="check-mark"></div></div><div class="play-btn"><div class="play-triangle"></div></div></div>
+            <div class="thumbnail-box green-tint"><div class="check-circle"><div class="check-mark"></div></div><div class="play-btn"><div class="play-triangle"></div></div></div>
+        </div>
+    </div>
+
+    <!-- 操作指示遮罩层 -->
+    <div id="guide-overlay">
+        <div id="guide-mask-bg"></div>
+        <div id="guide-highlight-box"></div>
+        <div class="guide-tooltip">
+            <div id="guide-text"></div>
+            <div class="guide-btn" onclick="nextMainGuideStep()">下一步</div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    // ================= 19种语言配置表 =================
+    const supportedLanguages = [
+        { code: 'zh-CN', label: '简体中文', sub: 'Chinese', active: true },
+        { code: 'de', label: 'Deutsch', sub: '德语' },
+        { code: 'en', label: 'English', sub: '英语' },
+        { code: 'fr', label: 'Français', sub: '法语' },
+        { code: 'es', label: 'Español', sub: '西班牙语' },
+        { code: 'it', label: 'Italiano', sub: '意大利语' },
+        { code: 'nl', label: 'Nederlands', sub: '荷兰语' },
+        { code: 'pt', label: 'Português', sub: '葡萄牙语' },
+        { code: 'ru', label: 'Русский', sub: '俄语' },
+        { code: 'cs', label: 'Čeština', sub: '捷克语' },
+        { code: 'da', label: 'Dansk', sub: '丹麦语' },
+        { code: 'fi', label: 'Suomi', sub: '芬兰语' },
+        { code: 'el', label: 'Ελληνικά', sub: '希腊语' },
+        { code: 'hu', label: 'Magyar', sub: '匈牙利语' },
+        { code: 'no', label: 'Norsk', sub: '挪威语' },
+        { code: 'pl', label: 'Polski', sub: '波兰语' },
+        { code: 'sv', label: 'Svenska', sub: '瑞典语' },
+        { code: 'tr', label: 'Türkçe', sub: '土耳其语' },
+        { code: 'ar', label: 'العربية', sub: '阿拉伯语' }
+    ];
+
+    function renderLanguages() {
+        const obGrid = document.getElementById('ob-lang-grid');
+        const settingsDropdown = document.getElementById('dropdown-lang');
+        
+        obGrid.innerHTML = supportedLanguages.map(lang => `
+            <div class="lang-option ${lang.active ? 'active' : ''}" onclick="selectObLang(this)">${lang.label}</div>
+        `).join('');
+
+        settingsDropdown.innerHTML = supportedLanguages.map(lang => `
+            <div class="menu-item dropdown-item" onclick="selectDropdownRadio(this)" title="${lang.sub}">
+                <div class="item-left"><div class="radio-dot ${lang.active ? 'active' : ''}"></div>${lang.label}</div>
+            </div>
+        `).join('');
+    }
+
+    // ================= 首次引导与环境初始化 =================
+    window.onload = () => {
+        renderLanguages();
+        if(!localStorage.getItem('appOnboardingDone_v5')) {
+            document.getElementById('onboarding-page').classList.add('active');
+        } else {
+            document.getElementById('app').classList.add('active');
+            checkMainGuide();
+        }
+        initPaletteScrollListener();
+    };
+
+    function nextObStep(stepNum) {
+        document.querySelectorAll('.ob-step').forEach(el => el.classList.remove('active'));
+        document.getElementById(`ob-step-${stepNum}`).classList.add('active');
+
+        if (stepNum === 3) {
+            setTimeout(() => {
+                document.getElementById('radar-anim').style.display = 'none';
+                document.getElementById('radar-desc').innerText = "已发现以下可配对设备：";
+                document.getElementById('found-device-box').style.display = 'flex';
+                
+                const enterBtn = document.getElementById('btn-enter-app');
+                enterBtn.classList.remove('disabled');
+            }, 2500);
+        }
+    }
+
+    function selectObLang(element) {
+        document.querySelectorAll('.lang-option').forEach(el => el.classList.remove('active'));
+        element.classList.add('active');
+    }
+
+    function finishOnboarding() {
+        localStorage.setItem('appOnboardingDone_v5', 'true');
+        document.getElementById('onboarding-page').classList.remove('active');
+        document.getElementById('app').classList.add('active');
+        checkMainGuide();
+    }
+
+
+    // ================= 主界面操作指示遮罩 =================
+    const mainGuideSteps = [
+        { target: null, text: "设备连接成功！\n接下来为您简单介绍界面操作。" },
+        { target: "#left-sidebar", text: "这是左侧工具栏，已加大触控热区，方便戴手套时盲操。" },
+        { target: ".center-play-icon", text: "点击中央播放按钮，可以查看实时监控或回放视频。" },
+        { target: "#right-sidebar", text: "这是右侧功能栏，可切换缩放、图像模式、七色调色板及设置。" }
+    ];
+    let currentMainGuideStep = 0;
+
+    function checkMainGuide() {
+        if(!localStorage.getItem('mainInterfaceGuideShown_v5')) {
+            document.getElementById('guide-overlay').style.display = 'block';
+            showMainGuideStep();
+        }
+    }
+
+    function showMainGuideStep() {
+        const step = mainGuideSteps[currentMainGuideStep];
+        const textEl = document.getElementById('guide-text');
+        const box = document.getElementById('guide-highlight-box');
+        const maskBg = document.getElementById('guide-mask-bg');
+        const tooltip = document.querySelector('.guide-tooltip');
+        
+        textEl.innerHTML = step.text.replace(/\n/g, '<br>');
+        document.querySelector('#guide-overlay .guide-btn').innerText = (currentMainGuideStep === mainGuideSteps.length - 1) ? "开始使用" : "下一步";
+        
+        if (step.target) {
+            maskBg.style.display = 'none';
+            box.style.display = 'block';
+            
+            const targetEl = document.querySelector(step.target);
+            const rect = targetEl.getBoundingClientRect();
+            const simRect = document.getElementById('phone-simulator').getBoundingClientRect();
+            
+            const padding = 8;
+            box.style.left = (rect.left - simRect.left - padding) + 'px';
+            box.style.top = (rect.top - simRect.top - padding) + 'px';
+            box.style.width = (rect.width + padding * 2) + 'px';
+            box.style.height = (rect.height + padding * 2) + 'px';
+            
+            if (currentMainGuideStep === 1) { tooltip.style.left = '60%'; tooltip.style.top = '50%'; }
+            else if (currentMainGuideStep === 3) { tooltip.style.left = '40%'; tooltip.style.top = '50%'; }
+            else { tooltip.style.left = '50%'; tooltip.style.top = '75%'; }
+        } else {
+            maskBg.style.display = 'block'; box.style.display = 'none';
+            tooltip.style.left = '50%'; tooltip.style.top = '50%';
+        }
+    }
+
+    function nextMainGuideStep() {
+        currentMainGuideStep++;
+        if (currentMainGuideStep >= mainGuideSteps.length) {
+            document.getElementById('guide-overlay').style.display = 'none';
+            localStorage.setItem('mainInterfaceGuideShown_v5', 'true');
+        } else {
+            showMainGuideStep();
+        }
+    }
+
+
+    // ================= 原有主交互逻辑 =================
+    document.querySelectorAll('.icon-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            document.querySelectorAll('.icon-btn').forEach(b => b.classList.remove('active'));
+            this.classList.add('active');
+        });
+    });
+
+    let activeMenu = null, isRecording = false, recordInterval = null, recordSeconds = 0;
+
+    function showToast(message) {
+        const toast = document.getElementById('toast');
+        toast.innerText = message; toast.style.display = 'block';
+        setTimeout(() => { toast.style.display = 'none'; }, 2000);
+    }
+    function captureImage() { showToast("图像捕获成功已存储图库"); }
+    function refreshScreen() { showToast("图像刷新完成"); }
+    function searchDevice() { showToast("正在查询设备..."); }
+    function playCenterVideo() { showToast("播放实时监控"); }
+
+    function toggleRecord() {
+        const btn = document.getElementById('btn-record'), timerUI = document.getElementById('record-timer');
+        if (!isRecording) {
+            isRecording = true; btn.classList.add('recording'); timerUI.style.display = 'block';
+            recordSeconds = 0; updateTimerUI();
+            recordInterval = setInterval(() => { recordSeconds++; updateTimerUI(); }, 1000);
+        } else {
+            isRecording = false; btn.classList.remove('recording'); timerUI.style.display = 'none';
+            clearInterval(recordInterval); showToast("视频录制成功已存储图库");
+        }
+    }
+    function updateTimerUI() {
+        const h = String(Math.floor(recordSeconds / 3600)).padStart(2, '0');
+        const m = String(Math.floor((recordSeconds % 3600) / 60)).padStart(2, '0');
+        const s = String(recordSeconds % 60).padStart(2, '0');
+        document.getElementById('record-timer').innerText = `${h}:${m}:${s}`;
+    }
+
+    function toggleMenu(menuId) {
+        const menus = document.querySelectorAll('.submenu');
+        menus.forEach(menu => { if (menu.id !== menuId) menu.style.display = 'none'; });
+        const target = document.getElementById(menuId);
+        if (target.style.display === 'flex') { 
+            target.style.display = 'none'; activeMenu = null; 
+        } else { 
+            target.style.display = 'flex'; activeMenu = menuId;
+            if (menuId === 'menu-palette') {
+                const activeItem = target.querySelector('.palette-item.active');
+                if (activeItem) {
+                    setTimeout(() => activeItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' }), 10);
+                }
+            }
+        }
+    }
+
+    // 处理普通的圆形单选按钮
+    function selectRadio(element) {
+        const dots = element.parentElement.querySelectorAll('.radio-dot');
+        dots.forEach(dot => dot.classList.remove('active'));
+        if(element.querySelector('.radio-dot')) element.querySelector('.radio-dot').classList.add('active');
+    }
+    function selectDropdownRadio(element) { selectRadio(element); }
+    
+    // ================= 调色板滚轮交互 =================
+    function selectPalette(element) {
+        const parent = element.parentElement;
+        parent.querySelectorAll('.palette-item').forEach(el => el.classList.remove('active'));
+        element.classList.add('active');
+        element.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function initPaletteScrollListener() {
+        const paletteMenu = document.getElementById('menu-palette');
+        let scrollTimeout;
+        paletteMenu.addEventListener('scroll', () => {
+            clearTimeout(scrollTimeout);
+            scrollTimeout = setTimeout(() => {
+                // 保持当前点击或可视区内的激活项
+            }, 60);
+        });
+    }
+
+    function toggleSettingsDropdown(dropdownId) {
+        const rangeMenu = document.getElementById('dropdown-range'), langMenu = document.getElementById('dropdown-lang');
+        if (dropdownId === 'dropdown-range') { 
+            langMenu.style.display = 'none'; 
+            rangeMenu.style.display = (rangeMenu.style.display === 'flex') ? 'none' : 'flex'; 
+        } else if (dropdownId === 'dropdown-lang') { 
+            rangeMenu.style.display = 'none'; 
+            langMenu.style.display = (langMenu.style.display === 'flex') ? 'none' : 'flex'; 
+        }
+    }
+    function showVersionModal() { document.getElementById('version-modal').style.display = 'flex'; }
+    function closeVersionModal() { document.getElementById('version-modal').style.display = 'none'; }
+    function openPage(pageId) {
+        document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
+        setTimeout(() => { document.getElementById(pageId).classList.add('active'); }, 150);
+    }
+</script>
+</body>
+</html>
